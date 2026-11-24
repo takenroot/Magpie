@@ -92,7 +92,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetAncestor, GetCursorInfo, GetForegroundWindow, GetMessageW,
     GetWindowThreadProcessId, LoadCursorW, SetWindowsHookExW, WindowFromPoint, CURSORINFO,
-    GA_ROOT, IDC_IBEAM,
+    GA_ROOT, IDC_HAND, IDC_IBEAM,
     KBDLLHOOKSTRUCT, KBDLLHOOKSTRUCT_FLAGS, LLKHF_INJECTED, MSLLHOOKSTRUCT, WH_KEYBOARD_LL,
     WH_MOUSE_LL, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_SYSKEYDOWN,
 };
@@ -856,14 +856,20 @@ fn wait_foreground_pid(want: u32) -> bool {
 /// 内容，盲目还原会把它覆盖掉。没取到一律静默。
 fn compat_fetch(app_path: &str, down_cursor: isize, up_pid: u32) -> Option<String> {
     // 第四道闸：按下点确实是文本表面。自绘应用（Zed）的滚动条拖动与拖选同形，
-    // UIA 树是空的，只有光标形状能区分——文本区是系统 I-beam，滚动条/标签页是箭头。
+    // UIA 树是空的，只有光标形状能区分——文本区是系统 I-beam，滚动条是箭头。
+    // 本地放宽：Zed 的可跳转符号（变量/函数/类名）用系统手形光标，原闸只认 I-beam
+    // 会把这些符号上的拖选一起拒掉，这里把手形加入白名单。手形同时也是标签页光标，
+    // 误弹风险由 worker 层辅助键闸兜底（见 mod.rs）：需按住配置的辅助键才弹。
     // 读不到（0）一律拒绝：宁可漏取一次，也不让 stale 选区误弹。
     let ibeam = unsafe { LoadCursorW(None, IDC_IBEAM) }
         .map(|h| h.0 as isize)
         .unwrap_or(0);
-    if ibeam == 0 || down_cursor != ibeam {
+    let hand = unsafe { LoadCursorW(None, IDC_HAND) }
+        .map(|h| h.0 as isize)
+        .unwrap_or(0);
+    if (ibeam == 0 || down_cursor != ibeam) && (hand == 0 || down_cursor != hand) {
         debug_log(format!(
-            "capture/windows: 兼容取词跳过（按下点非文本光标 cursor=0x{down_cursor:X} ibeam=0x{ibeam:X}）app={app_path:?}"
+            "capture/windows: 兼容取词跳过（按下点非文本光标 cursor=0x{down_cursor:X} ibeam=0x{ibeam:X} hand=0x{hand:X}）app={app_path:?}"
         ));
         return None;
     }
